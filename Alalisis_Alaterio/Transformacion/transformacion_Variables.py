@@ -5,14 +5,10 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, OrdinalEncoder, MinMaxScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-import os
 
 # 1. Carga de datos
-ruta_actual = os.path.dirname(__file__)
-archivo_excel = os.path.join(ruta_actual, "Libro1.xlsx")
-
+archivo_excel = 'Libro1.xlsx'
 df_original = pd.read_excel(archivo_excel, sheet_name='Hoja1')
-df_original.columns = df_original.columns.str.strip().str.lower()
 
 print('Cantidad de observaciones (clientes):', df_original.shape[0])
 print('Cantidad de variables:', df_original.shape[1])
@@ -22,10 +18,18 @@ print(df_original.head())
 # Creamos una copia de seguridad para trabajar
 df_procesado = copy.deepcopy(df_original)
 
-# 2. Definición de variables
-vars_nominales = ['sexo', 'país']
+# --- LIMPIEZA DE DATOS ---
+df_procesado['pais'] = df_procesado['pais'].str.strip().str.lower()
+df_procesado['NivelSatifaccion'] = df_procesado['NivelSatifaccion'].astype(str).str.strip().str.lower()
+
+# 2. SEPARACIÓN DE VARIABLES
+# Guardamos la variable de salida original por si la necesitamos después
+Y_original = df_procesado[['NivelSatifaccion']]
+
+# Definición de variables
+vars_nominales = ['Sexo', 'pais']
 vars_numericas = ['edad']
-vars_ordinales = ['nivelsatisfaccion']
+vars_ordinales = ['NivelSatifaccion']
 
 # 3. Función para predecir cantidad de columnas
 def analizar_variables(dataframe, vars_nom, vars_ord):
@@ -49,9 +53,10 @@ total_columnas_esperadas = analizar_variables(df_procesado, vars_nominales, vars
 print('Total de columnas tras la transformación:', total_columnas_esperadas)
 
 # 4. Definición de Transformadores
+
+mi_orden_logico = [['no me gusta', 'neutral', 'me gusta']]
 # Categóricos
-trans_ordinal = Pipeline(steps=[('ordinal', OrdinalEncoder())])
-# CORRECCIÓN: Se añadieron los paréntesis dentro de la lista para formar la tupla
+trans_ordinal = Pipeline(steps=[('ordinal', OrdinalEncoder(categories=mi_orden_logico))])
 trans_nominal = Pipeline(steps=[('one_hot', OneHotEncoder(sparse_output=False, handle_unknown="ignore"))])
 
 preprocesador_categorico = ColumnTransformer(transformers=[
@@ -59,16 +64,16 @@ preprocesador_categorico = ColumnTransformer(transformers=[
     ('cat_nom', trans_nominal, vars_nominales)
 ], remainder='passthrough', n_jobs=-1)
 
-# Numéricos. Se usa la variable calculada 'total_columnas_esperadas' en el range
-trans_minmax = Pipeline(steps=[('minmax', MinMaxScaler(feature_range=(0, 1)))])
-preprocesador_minmax = ColumnTransformer(transformers=[
-    ('trans_minmax', trans_minmax, list(range(total_columnas_esperadas)))
+# --- CAMBIO A ESTANDARIZACIÓN (StandardScaler) ---
+trans_scaler = Pipeline(steps=[('scaler', StandardScaler())])
+preprocesador_scaler = ColumnTransformer(transformers=[
+    ('trans_scaler', trans_scaler, list(range(total_columnas_esperadas)))
 ], remainder='passthrough')
 
 # 5. Construcción del Pipeline Maestro
 pipe = Pipeline(steps=[
     ('prep_categorico', preprocesador_categorico), 
-    ('prep_escalado', preprocesador_minmax)
+    ('prep_escalado', preprocesador_scaler) # <- Usamos el preprocesador con StandardScaler
 ])
 
 # 6. Ejecución del Pipeline
@@ -82,7 +87,6 @@ if len(vars_ordinales) != 0:
     nombres_columnas_finales.extend(vars_ordinales)
 
 if len(vars_nominales) != 0:
-    #  Se usa 'one_hot' respetando exactamente como se llamó arriba
     nombres_nuevas_vars = pipe.named_steps['prep_categorico'].transformers_[1][1].named_steps['one_hot'].get_feature_names_out(vars_nominales)
     nombres_columnas_finales.extend(nombres_nuevas_vars)
 
@@ -95,9 +99,12 @@ print(nombres_columnas_finales)
 # Reconstruimos el DataFrame con Pandas
 df_final = pd.DataFrame(data=X_transformado, columns=nombres_columnas_finales)
 
-# 8. Guardado de datos. Guardamos en un archivo NUEVO para no borrar los datos crudos originales
-df_final.to_excel('Dataset_Transformado_.xlsx', index=False)
+# --- 8. IMPLEMENTACIÓN DEL CONCAT ---
+# Aquí volvemos a unir la variable Y original al final del dataset transformado
+df_final_con_etiquetas = pd.concat([df_final, Y_original.reset_index(drop=True)], axis=1)
 
+# Guardamos el archivo (¡Ojo! Asegúrate de exportar el que tiene las etiquetas unidas)
+df_final_con_etiquetas.to_excel('Dataset_Transformado_Estandarizado.xlsx', index=False)
 
-print("\nVista previa de los datos transformados:")
-print(df_final.head(6))
+print("\nVista previa de los datos Estandarizados:")
+print(df_final_con_etiquetas.head(6))
